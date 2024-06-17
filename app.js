@@ -97,6 +97,51 @@ app.get('/notes/:userId/:noteKey', (req, res) => {
   });
 });
 
+// Endpoint to share a note
+app.post('/share', (req, res) => {
+  const { userId, noteKey, shareWithUserId } = req.body;
+
+  const updateShare = {
+    TableName: 'UserNotes',
+    Key: { userId },
+    UpdateExpression: 'add sharedWith :userId',
+    ExpressionAttributeValues: {
+      ':userId': dynamoDB.createSet([shareWithUserId])
+    }
+  };
+
+  dynamoDB.update(updateShare, (err) => {
+    if (err) {
+      console.error('Unable to share note. Error JSON:', JSON.stringify(err, null, 2));
+      res.status(500).send({ message: 'Error sharing note', error: JSON.stringify(err, null, 2) });
+    } else {
+      res.status(200).send({ message: 'Note shared successfully' });
+    }
+  });
+});
+
+// Endpoint to get shared notes for a user
+app.get('/sharedNotes/:userId', (req, res) => {
+  const userId = req.params.userId;
+
+  const params = {
+    TableName: 'UserNotes',
+    FilterExpression: 'contains(sharedWith, :userId)',
+    ExpressionAttributeValues: {
+      ':userId': userId
+    }
+  };
+
+  dynamoDB.scan(params, (err, data) => {
+    if (err) {
+      console.error('Unable to scan table. Error JSON:', JSON.stringify(err, null, 2));
+      res.status(500).send({ message: 'Error retrieving shared notes', error: JSON.stringify(err, null, 2) });
+    } else {
+      res.status(200).json(data.Items);
+    }
+  });
+});
+
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
