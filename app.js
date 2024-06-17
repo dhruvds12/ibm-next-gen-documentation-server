@@ -37,22 +37,55 @@ app.post('/notes', async (req, res) => {
     const updateNote = {
       TableName: 'UserNotes',
       Key: { userId },
-      UpdateExpression: 'set #notes.#imageName.#noteKey = :noteContent',
+      UpdateExpression: 'set #notes.#imageName.#noteKey = :noteContent, #notes.#imageName.#noteKeySharedWith = if_not_exists(#notes.#imageName.#noteKeySharedWith, :emptyList)',
       ExpressionAttributeNames: {
         '#notes': 'notes',
         '#imageName': imageName,
-        '#noteKey': noteKey
+        '#noteKey': noteKey,
+        '#noteKeySharedWith': `${noteKey}SharedWith`
       },
       ExpressionAttributeValues: {
-        ':noteContent': noteContent
+        ':noteContent': noteContent,
+        ':emptyList': []
       }
     };
 
     await dynamoDB.update(updateNote).promise();
-    res.json({ message: 'Note saved successfully' });
+
+    // Get the updated note to check if it has been shared with other users
+    const getNoteParams = {
+      TableName: 'UserNotes',
+      Key: { userId }
+    };
+
+    const data = await dynamoDB.get(getNoteParams).promise();
+    const sharedWithList = data.Item.notes[imageName][`${noteKey}SharedWith`];
+
+    if (sharedWithList && sharedWithList.length > 0) {
+      for (const sharedUserId of sharedWithList) {
+        const shareNoteParams = {
+          TableName: 'UserNotes',
+          Key: { userId: sharedUserId },
+          UpdateExpression: 'set #sharedNotes.#imageName.#originalOwner.#noteKey = :noteContent',
+          ExpressionAttributeNames: {
+            '#sharedNotes': 'sharedNotes',
+            '#imageName': imageName,
+            '#originalOwner': userId,
+            '#noteKey': noteKey
+          },
+          ExpressionAttributeValues: {
+            ':noteContent': noteContent
+          }
+        };
+
+        await dynamoDB.update(shareNoteParams).promise();
+      }
+    }
+
+    res.json({ message: 'Note saved and shared notes updated successfully' });
   } catch (err) {
-    console.error('Unable to ensure notes map exists. Error JSON:', JSON.stringify(err, null, 2));
-    res.status(500).json({ message: 'Error ensuring notes map exists', error: JSON.stringify(err, null, 2) });
+    console.error('Unable to ensure notes map exists or update note. Error JSON:', JSON.stringify(err, null, 2));
+    res.status(500).json({ message: 'Error ensuring notes map exists or updating note', error: JSON.stringify(err, null, 2) });
   }
 });
 
@@ -94,10 +127,11 @@ app.post('/share', async (req, res) => {
       const ensureSharedNotesMapExists = {
         TableName: 'UserNotes',
         Key: { userId: shareWithUserId },
-        UpdateExpression: 'set #sharedNotes.#imageName = if_not_exists(#sharedNotes.#imageName, :emptyMap)',
+        UpdateExpression: 'set #sharedNotes.#imageName.#originalOwner = if_not_exists(#sharedNotes.#imageName.#originalOwner, :emptyMap)',
         ExpressionAttributeNames: {
           '#sharedNotes': 'sharedNotes',
-          '#imageName': imageName
+          '#imageName': imageName,
+          '#originalOwner': userId
         },
         ExpressionAttributeValues: {
           ':emptyMap': {}
@@ -110,10 +144,11 @@ app.post('/share', async (req, res) => {
       const shareNoteParams = {
         TableName: 'UserNotes',
         Key: { userId: shareWithUserId },
-        UpdateExpression: 'set #sharedNotes.#imageName.#noteKey = :noteContent',
+        UpdateExpression: 'set #sharedNotes.#imageName.#originalOwner.#noteKey = :noteContent',
         ExpressionAttributeNames: {
           '#sharedNotes': 'sharedNotes',
           '#imageName': imageName,
+          '#originalOwner': userId,
           '#noteKey': noteKey
         },
         ExpressionAttributeValues: {
@@ -122,6 +157,25 @@ app.post('/share', async (req, res) => {
       };
 
       await dynamoDB.update(shareNoteParams).promise();
+
+      // Update the sharedWith list in the original note
+      const updateSharedWith = {
+        TableName: 'UserNotes',
+        Key: { userId },
+        UpdateExpression: 'set #notes.#imageName.#noteKeySharedWith = list_append(if_not_exists(#notes.#imageName.#noteKeySharedWith, :emptyList), :shareWithUserId)',
+        ExpressionAttributeNames: {
+          '#notes': 'notes',
+          '#imageName': imageName,
+          '#noteKeySharedWith': `${noteKey}SharedWith`
+        },
+        ExpressionAttributeValues: {
+          ':shareWithUserId': [shareWithUserId],
+          ':emptyList': []
+        }
+      };
+
+      await dynamoDB.update(updateSharedWith).promise();
+
       res.json({ message: 'Note shared successfully' });
     } else {
       res.status(404).json({ message: 'Note not found for sharing' });
