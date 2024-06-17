@@ -6,7 +6,7 @@ AWS.config.update({
 
 const dynamoDB = new AWS.DynamoDB.DocumentClient();
 
-const userId = '1234';
+const userId = '5678';
 
 const params = {
   TableName: 'UserNotes',
