@@ -175,6 +175,23 @@ app.get('/sharedNotes/:userId/:imageName/:noteKey', async (req, res) => {
   }
 });
 
+// New endpoint to get list of users
+app.get('/users', async (req, res) => {
+  const params = {
+    TableName: 'UserNotes',
+    ProjectionExpression: 'userId' // Only retrieve the userId attribute
+  };
+
+  try {
+    const data = await dynamoDB.scan(params).promise();
+    const userIds = data.Items.map(item => item.userId);
+    res.json(userIds);
+  } catch (err) {
+    console.error('Unable to scan the table. Error JSON:', JSON.stringify(err, null, 2));
+    res.status(500).json({ message: 'Error scanning table', error: JSON.stringify(err, null, 2) });
+  }
+});
+
 app.listen(port, () => {
   console.log(`Server running at port ${port}`);
 });
