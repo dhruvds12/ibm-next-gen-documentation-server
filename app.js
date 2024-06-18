@@ -231,6 +231,7 @@ app.post('/share', async (req, res) => {
   }
 });
 
+// Endpoint to get owner of sharedNotes userId and username
 app.get('/sharedNotes/:userId/:imageName/:noteKey', async (req, res) => {
   const { userId, imageName, noteKey } = req.params;
 
@@ -242,7 +243,24 @@ app.get('/sharedNotes/:userId/:imageName/:noteKey', async (req, res) => {
   try {
     const data = await dynamoDB.get(getSharedNotesParams).promise();
     if (data.Item && data.Item.sharedNotes && data.Item.sharedNotes[imageName] && data.Item.sharedNotes[imageName][noteKey]) {
-      res.json(data.Item.sharedNotes[imageName][noteKey]);
+      const sharedNoteUserIds = data.Item.sharedNotes[imageName][noteKey];
+
+      const usernames = await Promise.all(sharedNoteUserIds.map(async sharedUserId => {
+        const userParams = {
+          TableName: 'UserNotes',
+          Key: { userId: sharedUserId },
+          ProjectionExpression: 'userId, username'
+        };
+
+        const userData = await dynamoDB.get(userParams).promise();
+        if (userData.Item) {
+          return { userId: userData.Item.userId, username: userData.Item.username };
+        } else {
+          return { userId: sharedUserId, username: null };
+        }
+      }));
+
+      res.json(usernames);
     } else {
       res.status(404).json({ message: 'Shared notes not found' });
     }
