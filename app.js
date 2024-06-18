@@ -1,6 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const AWS = require('aws-sdk');
+const crypto = require('crypto');
 const app = express();
 const port = 3000;
 
@@ -12,10 +13,89 @@ AWS.config.update({
 
 const dynamoDB = new AWS.DynamoDB.DocumentClient();
 
+// Function to generate a unique user ID
+function generateUserId() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+// Function to hash a password
+function hashPassword(password) {
+  return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+// Sign-up endpoint
+app.post('/signup', async (req, res) => {
+  const { username, email, password } = req.body;
+
+  if (!username || !email || !password) {
+    return res.status(400).json({ message: 'Username, email, and password are required' });
+  }
+
+  const userId = generateUserId();
+  const hashedPassword = hashPassword(password);
+
+  const newUser = {
+    TableName: 'UserNotes',
+    Item: {
+      userId: userId,
+      username: username,
+      email: email,
+      password: hashedPassword,
+      notes: {},
+      sharedNotes: {},
+      sharedWith: {}
+    }
+  };
+
+  try {
+    await dynamoDB.put(newUser).promise();
+    res.json({ message: 'User signed up successfully', userId: userId });
+  } catch (err) {
+    console.error('Unable to add user. Error JSON:', JSON.stringify(err, null, 2));
+    res.status(500).json({ message: 'Error signing up user', error: JSON.stringify(err, null, 2) });
+  }
+});
+
+// Login endpoint
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ message: 'Username and password are required' });
+  }
+
+  const hashedPassword = hashPassword(password);
+
+  const params = {
+    TableName: 'UserNotes',
+    IndexName: 'username-index',
+    KeyConditionExpression: 'username = :username',
+    ExpressionAttributeValues: {
+      ':username': username
+    }
+  };
+
+  try {
+    const data = await dynamoDB.query(params).promise();
+    if (data.Items.length === 0) {
+      return res.status(401).json({ message: 'Invalid username or password' });
+    }
+
+    const user = data.Items[0];
+    if (user.password !== hashedPassword) {
+      return res.status(401).json({ message: 'Invalid username or password' });
+    }
+
+    res.json({ message: 'Login successful', userId: user.userId });
+  } catch (err) {
+    console.error('Unable to login user. Error JSON:', JSON.stringify(err, null, 2));
+    res.status(500).json({ message: 'Error logging in user', error: JSON.stringify(err, null, 2) });
+  }
+});
+
 app.post('/notes', async (req, res) => {
   const { userId, imageName, noteKey, noteContent } = req.body;
 
-  // First, ensure the notes map exists for the specified imageName
   const ensureNotesMapExists = {
     TableName: 'UserNotes',
     Key: { userId },
@@ -91,7 +171,6 @@ app.post('/share', async (req, res) => {
     if (data.Item && data.Item.notes && data.Item.notes[imageName] && data.Item.notes[imageName][noteKey]) {
       const noteContent = data.Item.notes[imageName][noteKey];
 
-      // Ensure the sharedNotes map exists for the shareWithUserId
       const ensureSharedNotesMapExists = {
         TableName: 'UserNotes',
         Key: { userId: shareWithUserId },
@@ -108,7 +187,6 @@ app.post('/share', async (req, res) => {
       await dynamoDB.update(ensureSharedNotesMapExists).promise();
       console.log('Shared notes map ensured. Proceeding to share the note.');
 
-      // Update the shared notes list
       const shareNoteParams = {
         TableName: 'UserNotes',
         Key: { userId: shareWithUserId },
@@ -126,7 +204,6 @@ app.post('/share', async (req, res) => {
 
       await dynamoDB.update(shareNoteParams).promise();
 
-      // Update the sharedWith list in the original note
       const updateSharedWith = {
         TableName: 'UserNotes',
         Key: { userId },
@@ -175,22 +252,23 @@ app.get('/sharedNotes/:userId/:imageName/:noteKey', async (req, res) => {
   }
 });
 
-// New endpoint to get list of users
+// Endpoint to get list of users
 app.get('/users', async (req, res) => {
   const params = {
     TableName: 'UserNotes',
-    ProjectionExpression: 'userId' // Only retrieve the userId attribute
+    ProjectionExpression: 'userId, username' // Retrieve userId and username attributes
   };
 
   try {
     const data = await dynamoDB.scan(params).promise();
-    const userIds = data.Items.map(item => item.userId);
-    res.json(userIds);
+    const users = data.Items.map(item => ({ userId: item.userId, username: item.username }));
+    res.json(users);
   } catch (err) {
     console.error('Unable to scan the table. Error JSON:', JSON.stringify(err, null, 2));
     res.status(500).json({ message: 'Error scanning table', error: JSON.stringify(err, null, 2) });
   }
 });
+
 
 app.listen(port, () => {
   console.log(`Server running at port ${port}`);

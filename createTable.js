@@ -13,12 +13,28 @@ const params = {
         { AttributeName: 'userId', KeyType: 'HASH' }  // Partition key
     ],
     AttributeDefinitions: [
-        { AttributeName: 'userId', AttributeType: 'S' }
+        { AttributeName: 'userId', AttributeType: 'S' },
+        { AttributeName: 'username', AttributeType: 'S' }
     ],
     ProvisionedThroughput: {
         ReadCapacityUnits: 5,
         WriteCapacityUnits: 5
-    }
+    },
+    GlobalSecondaryIndexes: [
+        {
+            IndexName: 'username-index',
+            KeySchema: [
+                { AttributeName: 'username', KeyType: 'HASH' }  // Partition key for GSI
+            ],
+            Projection: {
+                ProjectionType: 'ALL'
+            },
+            ProvisionedThroughput: {
+                ReadCapacityUnits: 5,
+                WriteCapacityUnits: 5
+            }
+        }
+    ]
 };
 
 dynamodb.createTable(params, (err, data) => {
